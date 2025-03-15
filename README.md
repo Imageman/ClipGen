@@ -65,7 +65,7 @@ With 1,000 daily requests, you can process hundreds of texts and extract informa
 
 1. **Clone the repository**
    ```
-   git clone https://github.com/yourusername/clipgen.git
+   git clone https://github.com/Veta-one/clipgen.git
    cd clipgen
    ```
 
