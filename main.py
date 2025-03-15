@@ -1,0 +1,518 @@
+import sys
+import os
+import logging
+import json
+import time
+from multiprocessing import Queue
+from multiprocessing.queues import Empty
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+import threading
+from PIL import ImageGrab
+import pyperclip
+import google.generativeai as genai
+from google.generativeai import GenerationConfig
+import win32api
+import win32con
+import win32gui
+from pynput import keyboard as pkb
+import customtkinter as ctk
+from tkinter import Text, Menu
+
+# Настройка логирования
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s', datefmt='%H:%M:%S'))
+logger.addHandler(console_handler)
+
+# Глобальная переменная для текущей конфигурации
+current_config = None
+
+# Загрузка доступных конфигураций
+if getattr(sys, 'frozen', False):
+    base_path = os.path.dirname(sys.executable)
+else:
+    base_path = os.path.dirname(__file__)
+
+config_files = [f for f in os.listdir(base_path) if f.startswith('config_') and f.endswith('.json')]
+languages = [f.replace('config_', '').replace('.json', '').upper() for f in config_files]
+language_configs = {}
+for config_file in config_files:
+    lang_code = config_file.replace('config_', '').replace('.json', '').upper()
+    with open(os.path.join(base_path, config_file), 'r', encoding='utf-8') as f:
+        language_configs[lang_code] = json.load(f)
+
+# Устанавливаем начальный язык (по умолчанию RU, если доступен)
+if "RU" in languages:
+    current_config = language_configs["RU"]
+else:
+    current_config = list(language_configs.values())[0]  # Первый доступный язык
+
+API_KEY = current_config['api_key']
+if not API_KEY:
+    logger.error("Error: API key not found in configuration")
+    sys.exit(1)
+
+# Конфигурация Gemini
+genai.configure(api_key=API_KEY)
+MODEL_NAME = "models/gemini-2.0-flash-exp"
+model = genai.GenerativeModel(model_name=MODEL_NAME)
+executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="GeminiWorker")
+
+# Отслеживание состояния клавиш
+key_states = {key['combination'].lower(): False for key in current_config['hotkeys']}
+key_states['ctrl'] = False
+
+def call_with_timeout(func, timeout, *args, **kwargs):
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="TimeoutExecutor") as temp_executor:
+        future = temp_executor.submit(func, *args, **kwargs)
+        return future.result(timeout=timeout)
+
+def process_text_with_gemini(original_text: str, action: str, prompt: str) -> str:
+    try:
+        full_prompt = prompt + original_text
+        def generate():
+            return model.generate_content(full_prompt, generation_config=GenerationConfig(temperature=0.7, max_output_tokens=2048))
+
+        start_time = time.time()
+        response = call_with_timeout(generate, 45)
+        elapsed_time = time.time() - start_time
+        logger.info(f"[{action}] Completed - executed in {elapsed_time:.2f} seconds")
+        if response and response.text:
+            logger.info(f"[{action}] {response.text.strip()}")
+        return response.text.strip() if response and response.text else ""
+    except FutureTimeoutError:
+        logger.error(f"[{action}] Timeout exceeded waiting for Gemini response")
+        return ""
+    except Exception as e:
+        logger.error(f"[{action}] Error querying Gemini: {e}")
+        return ""
+
+def handle_image_analysis(action: str, prompt: str):
+    try:
+        image = ImageGrab.grabclipboard()
+        if image is None:
+            logger.warning(f"[{action}] Clipboard does not contain an image")
+            return
+        
+        def generate():
+            return model.generate_content(contents=[prompt, image], generation_config=GenerationConfig(temperature=0.7, max_output_tokens=2048))
+
+        start_time = time.time()
+        response = call_with_timeout(generate, 45)
+        elapsed_time = time.time() - start_time
+        logger.info(f"[{action}] Image analysis completed - executed in {elapsed_time:.2f} seconds")
+        if response and response.text:
+            logger.info(f"[{action}] {response.text.strip()}")
+            pyperclip.copy(response.text.strip())
+            time.sleep(0.3)
+            win32api.keybd_event(win32con.VK_CONTROL, 0, 0, 0)
+            win32api.keybd_event(ord('V'), 0, 0, 0)
+            time.sleep(0.1)
+            win32api.keybd_event(ord('V'), 0, win32con.KEYEVENTF_KEYUP, 0)
+            win32api.keybd_event(win32con.VK_CONTROL, 0, win32con.KEYEVENTF_KEYUP, 0)
+    except Exception as ex:
+        logger.error(f"[{action}] Error during image analysis: {ex}")
+
+def _handle_text_operation(operation_func, action, prompt):
+    try:
+        win32api.keybd_event(win32con.VK_CONTROL, 0, 0, 0)
+        win32api.keybd_event(ord('C'), 0, 0, 0)
+        time.sleep(0.1)
+        win32api.keybd_event(ord('C'), 0, win32con.KEYEVENTF_KEYUP, 0)
+        win32api.keybd_event(win32con.VK_CONTROL, 0, win32con.KEYEVENTF_KEYUP, 0)
+        time.sleep(0.3)
+
+        original_text = pyperclip.paste()
+        if not original_text.strip():
+            logger.warning(f"[{action}] Clipboard is empty after copying")
+            return
+
+        processed_text = operation_func(original_text, action, prompt)
+        pyperclip.copy(processed_text)
+
+        time.sleep(0.3)
+        win32api.keybd_event(win32con.VK_CONTROL, 0, 0, 0)
+        win32api.keybd_event(ord('V'), 0, 0, 0)
+        time.sleep(0.1)
+        win32api.keybd_event(ord('V'), 0, win32con.KEYEVENTF_KEYUP, 0)
+        win32api.keybd_event(win32con.VK_CONTROL, 0, win32con.KEYEVENTF_KEYUP, 0)
+    except Exception as ex:
+        logger.error(f"[{action}] Error: {ex}")
+
+def on_press(key, queue):
+    global key_states
+    try:
+        key_str = str(key).lower().replace("key.", "")
+        if key_str == "ctrl_l" or key_str == "ctrl_r":
+            key_states['ctrl'] = True
+            return
+
+        for hotkey in current_config['hotkeys']:
+            combo = hotkey['combination'].lower()
+            action = hotkey['description'][1]
+            if key_str in combo.lower() and key_states['ctrl']:
+                logger.info(f"[{action}] {hotkey['description'][0]} - {time.strftime('%H:%M:%S')}")
+                queue.put(action)
+                key_states['ctrl'] = False
+                key_states[combo] = False
+                break
+    except Exception as e:
+        logger.error(f"Error in on_press: {e}")
+
+def on_release(key, queue):
+    global key_states
+    try:
+        key_str = str(key).lower().replace("key.", "")
+        if key_str == "ctrl_l" or key_str == "ctrl_r":
+            key_states['ctrl'] = False
+        for hotkey in current_config['hotkeys']:
+            if key_str in hotkey['combination'].lower():
+                key_states[hotkey['combination'].lower()] = False
+    except Exception as e:
+        logger.error(f"Error in on_release: {e}")
+
+def hotkey_listener(queue: Queue, stop_event: threading.Event):
+    try:
+        logger.info("Starting hotkey listener")
+        with pkb.Listener(on_press=lambda k: on_press(k, queue), on_release=lambda k: on_release(k, queue)) as listener:
+            stop_event.wait()
+            listener.stop()
+        logger.info("Hotkey listener stopped")
+    except Exception as e:
+        logger.error(f"Error in listener process: {e}")
+
+class App(ctk.CTk):
+    def __init__(self, queue, listener_thread, stop_event):
+        super().__init__()
+        logger.info("Initializing application")
+        self.queue = queue
+        self.listener_thread = listener_thread
+        self.stop_event = stop_event
+        self.title("ClipGen")
+        self.geometry("554x632")
+        self.resizable(True, True)
+        self.configure(fg_color="#1e1e1e")
+
+        # Устанавливаем минимальный размер окна
+        self.minsize(400, 300)
+
+        # Titlebar без кнопок
+        self.titlebar = ctk.CTkFrame(self, height=30, fg_color="#1e1e1e", corner_radius=10)
+        self.titlebar.pack(fill="x", padx=10, pady=5)
+        self.titlebar.pack_propagate(False)
+
+        # Лейбл для подсказки в titlebar
+        self.tooltip_label = ctk.CTkLabel(
+            self.titlebar,
+            text="",
+            fg_color="transparent",  # Прозрачный фон
+            text_color="#FFFFFF",
+            padx=5,
+            pady=2
+        )
+        self.tooltip_label.pack(side="left")
+
+        # Выпадающий список языков
+        self.lang_combobox = ctk.CTkComboBox(
+            self.titlebar,
+            values=languages,
+            command=self.change_language,
+            fg_color='#333333',
+            text_color='#ffffff',
+            dropdown_fg_color='#333333',
+            dropdown_text_color='#ffffff',
+            width=100
+        )
+        self.lang_combobox.pack(side='right', padx=5, pady=5)
+        self.lang_combobox.set("RU" if "RU" in languages else languages[0])
+
+        # Перетаскивание окна
+        self.titlebar.bind("<Button-1>", self.start_drag)
+        self.titlebar.bind("<B1-Motion>", self.drag)
+
+        # Buttons frame с переносом
+        self.button_frame = ctk.CTkFrame(self, fg_color="#2e2e2e", corner_radius=10)
+        self.button_frame.pack(fill="x", padx=10, pady=5)
+
+        self.action_colors = {hotkey['description'][1]: hotkey['log_color'] for hotkey in current_config['hotkeys']}
+        self.action_colors["restart"] = "#FFFFFF"
+
+        # Формируем список кнопок из конфига
+        self.button_configs = [(hotkey['description'][0], hotkey['description'][1], hotkey['description'][2]) for hotkey in current_config['hotkeys']]
+        # Проверяем наличие секции buttons, если её нет — используем значения по умолчанию
+        restart_text = current_config.get('buttons', {}).get('restart', "Restart")
+        restart_tooltip = current_config.get('buttons', {}).get('restart_tooltip', "Restarts the application.")
+        self.button_configs.append((restart_text, "restart", restart_tooltip))
+
+        # Используем grid для кнопок
+        self.button_inner_frame = ctk.CTkFrame(self.button_frame, fg_color="#2e2e2e", corner_radius=10)
+        self.button_inner_frame.pack(fill="both", expand=True, padx=2, pady=2)
+
+        self.buttons = []
+        for idx, (text, action, tooltip) in enumerate(self.button_configs):
+            hover_color = self.action_colors[action]
+            if action == "restart":
+                hover_color = "#FF9999"
+            btn = ctk.CTkButton(
+                self.button_inner_frame,
+                text=text,
+                fg_color="#333333",
+                hover_color=hover_color,
+                text_color=self.action_colors[action],
+                corner_radius=8,
+                command=lambda a=action: self.process_action(a)
+            )
+            btn.grid(row=idx, column=0, padx=5, pady=5, sticky="ew")
+            btn.bind("<Enter>", lambda e, t=tooltip, a=action, b=btn: self.show_tooltip(t, a, b))
+            btn.bind("<Leave>", lambda e, b=btn: self.hide_tooltip(b))
+            self.buttons.append(btn)
+
+        # Log area с кастомным скроллбаром
+        self.log_frame = ctk.CTkScrollableFrame(
+            self,
+            fg_color="#2e2e2e",
+            scrollbar_button_color="#252525",
+            scrollbar_button_hover_color="#555555",
+            corner_radius=10
+        )
+        self.log_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+        self.log_area = Text(
+            self.log_frame,
+            wrap="word",
+            font=("Courier", 10),
+            bg="#2e2e2e",
+            fg="#FFFFFF",
+            insertbackground="#FFFFFF",
+            borderwidth=0,
+            highlightthickness=0
+        )
+        self.log_area.pack(fill="both", expand=True)
+
+        # Добавляем контекстное меню для копирования
+        self.log_menu = Menu(self.log_area, tearoff=0)
+        self.log_menu.add_command(label="Copy", command=self.copy_log)
+        self.log_area.bind("<Button-3>", self.show_log_menu)
+        self.log_area.bind("<Control-c>", self.copy_log)
+
+        class LogHandler(logging.Handler):
+            def __init__(self, text_widget, action_colors):
+                super().__init__()
+                self.text_widget = text_widget
+                self.action_colors = action_colors
+                self.text_widget.tag_configure("INFO", foreground="#FFFFFF")
+                self.text_widget.tag_configure("WARNING", foreground="#FFD700")
+                self.text_widget.tag_configure("ERROR", foreground="#FF4500")
+                for action, color in action_colors.items():
+                    self.text_widget.tag_configure(action, foreground=color)
+
+            def emit(self, record):
+                msg = record.msg
+                # Фильтруем дебаг-логи
+                if any(debug_msg in msg for debug_msg in ["Starting action", "Received event", "Processing action"]):
+                    return
+
+                self.text_widget.configure(state='normal')
+                level_tag = record.levelname
+                action_tag = None
+                for action in self.action_colors.keys():
+                    if f"[{action}]" in msg:
+                        action_tag = action
+                        break
+
+                if action_tag:
+                    msg_cleaned = msg.replace(f"[{action_tag}] ", "")
+                    self.text_widget.insert("end", msg_cleaned + '\n', (level_tag, action_tag))
+                else:
+                    self.text_widget.insert("end", msg + '\n', level_tag)
+
+                self.text_widget.see("end")
+                self.text_widget.configure(state='normal')
+
+        log_handler = LogHandler(self.log_area, self.action_colors)
+        log_handler.setFormatter(logging.Formatter('%(message)s'))
+        logger.addHandler(log_handler)
+
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+        logger.info("Starting queue check")
+        self.after(100, self.check_queue)
+        logger.info("Interface initialized")
+
+        # Убедимся, что окно видимо и на переднем плане
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+
+        # Обновляем расположение кнопок при изменении размера окна с оптимизацией
+        self._last_update = 0
+        self.bind("<Configure>", self.debounce_update_layout)
+
+    def start_drag(self, event):
+        self.x = event.x
+        self.y = event.y
+
+    def drag(self, event):
+        deltax = event.x - self.x
+        deltay = event.y - self.y
+        x = self.winfo_x() + deltax
+        y = self.winfo_y() + deltay
+        self.geometry(f"+{x}+{y}")
+
+    def debounce_update_layout(self, event):
+        current_time = time.time()
+        if current_time - self._last_update > 0.1:  # Обновляем не чаще 1 раза в 100 мс
+            self._last_update = current_time
+            self.update_button_layout()
+
+    def update_button_layout(self):
+        # Обновляем расположение кнопок в зависимости от ширины окна
+        width = self.button_inner_frame.winfo_width()
+        # Минимальная ширина кнопки определяется шириной текста
+        columns = 1
+
+        # Сбрасываем старые настройки
+        for widget in self.button_inner_frame.winfo_children():
+            widget.grid_forget()
+
+        # Распределяем кнопки
+        buttons_per_row = []
+        current_row = []
+        for btn in self.buttons:
+            btn_width = btn.winfo_reqwidth()  # Ширина кнопки определяется текстом
+            if len(current_row) > 0 and sum(b.winfo_reqwidth() for b in current_row) + btn_width + (len(current_row) + 1) * 10 > width:
+                buttons_per_row.append(current_row)
+                current_row = [btn]
+            else:
+                current_row.append(btn)
+        if current_row:
+            buttons_per_row.append(current_row)
+
+        # Размещаем кнопки
+        for row_idx, row in enumerate(buttons_per_row):
+            for col_idx, btn in enumerate(row):
+                btn.grid(row=row_idx, column=col_idx, padx=5, pady=5, sticky="ew")
+            # Растягиваем кнопки по строке
+            for col_idx in range(len(row)):
+                self.button_inner_frame.grid_columnconfigure(col_idx, weight=1)
+            if len(row) == 1:
+                btn.grid(columnspan=1, sticky="ew")
+            else:
+                for col_idx in range(len(row), columns):
+                    self.button_inner_frame.grid_columnconfigure(col_idx, weight=0)
+
+    def show_tooltip(self, text, action, button):
+        if not hasattr(self, '_active_button') or self._active_button != button:
+            if hasattr(self, '_active_button'):
+                self.hide_tooltip(self._active_button)
+            self.tooltip_label.configure(text=text)
+            button._original_fg_color = button.cget("fg_color")
+            button._original_text_color = button.cget("text_color")
+            button.configure(fg_color=self.action_colors[action], text_color="#333333")
+            self._active_button = button
+            self.after(100, lambda: self.tooltip_label.update())
+
+    def hide_tooltip(self, button):
+        if hasattr(self, '_active_button') and self._active_button == button:
+            self.tooltip_label.configure(text="")
+            if hasattr(button, '_original_fg_color'):
+                button.configure(fg_color=button._original_fg_color, text_color=button._original_text_color)
+            del self._active_button
+
+    def process_action(self, action):
+        logger.info(f"Processing action: {action}")
+        self.queue.put(action)
+
+    def change_language(self, lang):
+        global current_config, key_states
+        current_config = language_configs[lang.upper()]
+        key_states = {key['combination'].lower(): False for key in current_config['hotkeys']}
+        key_states['ctrl'] = False
+        # Обновляем цвета действий
+        self.action_colors = {hotkey['description'][1]: hotkey['log_color'] for hotkey in current_config['hotkeys']}
+        self.action_colors["restart"] = "#FFFFFF"
+        # Обновляем конфигурацию кнопок
+        self.button_configs = [(hotkey['description'][0], hotkey['description'][1], hotkey['description'][2]) for hotkey in current_config['hotkeys']]
+        # Проверяем наличие секции buttons, если её нет — используем значения по умолчанию
+        restart_text = current_config.get('buttons', {}).get('restart', "Restart")
+        restart_tooltip = current_config.get('buttons', {}).get('restart_tooltip', "Restarts the application.")
+        self.button_configs.append((restart_text, "restart", restart_tooltip))
+        # Обновляем текст, тултипы и цвета кнопок
+        for idx, (text, action, tooltip) in enumerate(self.button_configs):
+            # Обновляем текст кнопки
+            self.buttons[idx].configure(text=text)
+            # Очищаем старые привязки событий
+            self.buttons[idx].unbind("<Enter>")
+            self.buttons[idx].unbind("<Leave>")
+            # Привязываем новые события с обновлённым тултипом
+            self.buttons[idx].bind("<Enter>", lambda e, t=tooltip, a=action, b=self.buttons[idx]: self.show_tooltip(t, a, b))
+            self.buttons[idx].bind("<Leave>", lambda e, b=self.buttons[idx]: self.hide_tooltip(b))
+            # Обновляем цвета
+            self.buttons[idx].configure(text_color=self.action_colors[action])
+            if action == "restart":
+                self.buttons[idx].configure(hover_color="#FF9999")
+            else:
+                self.buttons[idx].configure(hover_color=self.action_colors[action])
+        logger.info(f"Language changed to {lang}")
+
+    def check_queue(self):
+        try:
+            event = self.queue.get_nowait()
+            logger.info(f"Received event from queue: {event}")
+            actions = {
+                hotkey['description'][1]: lambda act=hotkey['description'][1], pr=hotkey['prompt']: _handle_text_operation(process_text_with_gemini, act, pr)
+                for hotkey in current_config['hotkeys'] if hotkey['description'][1] != 'image'
+            }
+            actions['image'] = lambda act='image', pr=current_config['hotkeys'][-1]['prompt']: handle_image_analysis(act, pr)
+            actions['restart'] = lambda: os.execl(sys.executable, sys.executable, *sys.argv)
+            
+            if event in actions:
+                logger.info(f"Starting action: {event}")
+                threading.Thread(target=actions[event], args=(), daemon=True).start()
+        except Empty:
+            pass
+        except Exception as e:
+            logger.error(f"Error processing queue: {e}")
+        self.after(100, self.check_queue)
+
+    def show_log_menu(self, event):
+        self.log_menu.post(event.x_root, event.y_root)
+
+    def copy_log(self, event=None):
+        selected_text = self.log_area.selection_get()
+        if selected_text:
+            self.clipboard_clear()
+            self.clipboard_append(selected_text)
+        return "break"  # Предотвращаем дальнейшую обработку события
+
+    def on_closing(self):
+        logger.info("Closing program...")
+        global executor
+        executor.shutdown(wait=True, cancel_futures=True)
+        if self.listener_thread.is_alive():
+            self.stop_event.set()
+            self.listener_thread.join(timeout=1.0)
+            time.sleep(0.5)
+        self.quit()
+        self.destroy()
+
+def main():
+    logger.info("Main process started.")
+    event_queue = Queue()
+    stop_event = threading.Event()
+    listener_thread = threading.Thread(target=hotkey_listener, args=(event_queue, stop_event), daemon=True)
+    listener_thread.start()
+    try:
+        app = App(event_queue, listener_thread, stop_event)
+        app.mainloop()
+    except KeyboardInterrupt:
+        logger.info("Closing program by Ctrl+C...")
+        executor.shutdown(wait=True, cancel_futures=True)
+        if listener_thread.is_alive():
+            stop_event.set()
+            listener_thread.join(timeout=1.0)
+        sys.exit(0)
+    logger.info("Program completed after mainloop")
+
+if __name__ == "__main__":
+    main()
