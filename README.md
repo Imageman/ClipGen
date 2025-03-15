@@ -204,6 +204,11 @@ ClipGen uses the powerful **models/gemini-2.0-flash-exp** model from Google, whi
 
 ClipGen processes text locally and only sends content to Google Gemini API when a hotkey is pressed. No data is stored or logged beyond the current session.
 
+## 📅 In the plans
+- Add macOS and Linux support.
+- Expand functionality to work with other APIs.
+- Improve the interface and add hotkey settings.
+
 ## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
