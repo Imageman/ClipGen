@@ -13,6 +13,8 @@ ClipGen is a powerful desktop utility that transforms how you interact with text
 
 ![ClipGen in action](screenshots/clipgen-demo.gif)
 <!-- ^ Add a screen recording showing how quickly you can copy text and transform it -->
+**[Download ClipGen here](http://vetaone.site/ClipGen/ClipGen.zip)**  
+*Important: Don’t forget to replace the API key in both configuration files (`config_en.json` and `config_ru.json`) with your own! You can get a free API key at [Google AI Studio](https://aistudio.google.com/u/0/apikey).*
 
 ## 💰 Completely FREE to Use!
 
