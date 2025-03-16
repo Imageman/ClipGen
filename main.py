@@ -46,7 +46,7 @@ for config_file in config_files:
 if "RU" in languages:
     current_config = language_configs["RU"]
 else:
-    current_config = list(language_configs.values())[0]  # Первый доступный язык
+    current_config = list(language_configs.values())[0]
 
 API_KEY = current_config['api_key']
 if not API_KEY:
@@ -193,74 +193,50 @@ class App(ctk.CTk):
         self.geometry("554x632")
         self.resizable(True, True)
         self.configure(fg_color="#1e1e1e")
-
-        # Устанавливаем минимальный размер окна
         self.minsize(400, 300)
+        self._last_update = 0
 
-        # Titlebar без кнопок
+        # Titlebar
         self.titlebar = ctk.CTkFrame(self, height=30, fg_color="#1e1e1e", corner_radius=10)
         self.titlebar.pack(fill="x", padx=10, pady=5)
         self.titlebar.pack_propagate(False)
 
-        # Лейбл для подсказки в titlebar
         self.tooltip_label = ctk.CTkLabel(
-            self.titlebar,
-            text="",
-            fg_color="transparent",  # Прозрачный фон
-            text_color="#FFFFFF",
-            padx=5,
-            pady=2
+            self.titlebar, text="", fg_color="transparent", text_color="#FFFFFF", padx=5, pady=2
         )
         self.tooltip_label.pack(side="left")
 
-        # Выпадающий список языков
         self.lang_combobox = ctk.CTkComboBox(
-            self.titlebar,
-            values=languages,
-            command=self.change_language,
-            fg_color='#333333',
-            text_color='#ffffff',
-            dropdown_fg_color='#333333',
-            dropdown_text_color='#ffffff',
-            width=100
+            self.titlebar, values=languages, command=self.change_language,
+            fg_color='#333333', text_color='#ffffff', dropdown_fg_color='#333333',
+            dropdown_text_color='#ffffff', width=100
         )
         self.lang_combobox.pack(side='right', padx=5, pady=5)
         self.lang_combobox.set("RU" if "RU" in languages else languages[0])
 
-        # Перетаскивание окна
         self.titlebar.bind("<Button-1>", self.start_drag)
         self.titlebar.bind("<B1-Motion>", self.drag)
 
-        # Buttons frame с переносом
+        # Buttons frame
         self.button_frame = ctk.CTkFrame(self, fg_color="#2e2e2e", corner_radius=10)
         self.button_frame.pack(fill="x", padx=10, pady=5)
+        self.button_inner_frame = ctk.CTkFrame(self.button_frame, fg_color="#2e2e2e", corner_radius=10)
+        self.button_inner_frame.pack(fill="both", expand=True, padx=2, pady=2)
 
         self.action_colors = {hotkey['description'][1]: hotkey['log_color'] for hotkey in current_config['hotkeys']}
         self.action_colors["restart"] = "#FFFFFF"
-
-        # Формируем список кнопок из конфига
-        self.button_configs = [(hotkey['description'][0], hotkey['description'][1], hotkey['description'][2]) for hotkey in current_config['hotkeys']]
-        # Проверяем наличие секции buttons, если её нет — используем значения по умолчанию
+        self.button_configs = [(hotkey['description'][0], hotkey['description'][1], hotkey['description'][2]) 
+                              for hotkey in current_config['hotkeys']]
         restart_text = current_config.get('buttons', {}).get('restart', "Restart")
         restart_tooltip = current_config.get('buttons', {}).get('restart_tooltip', "Restarts the application.")
         self.button_configs.append((restart_text, "restart", restart_tooltip))
 
-        # Используем grid для кнопок
-        self.button_inner_frame = ctk.CTkFrame(self.button_frame, fg_color="#2e2e2e", corner_radius=10)
-        self.button_inner_frame.pack(fill="both", expand=True, padx=2, pady=2)
-
         self.buttons = []
         for idx, (text, action, tooltip) in enumerate(self.button_configs):
-            hover_color = self.action_colors[action]
-            if action == "restart":
-                hover_color = "#FF9999"
+            hover_color = self.action_colors[action] if action != "restart" else "#FF9999"
             btn = ctk.CTkButton(
-                self.button_inner_frame,
-                text=text,
-                fg_color="#333333",
-                hover_color=hover_color,
-                text_color=self.action_colors[action],
-                corner_radius=8,
+                self.button_inner_frame, text=text, fg_color="#333333", hover_color=hover_color,
+                text_color=self.action_colors[action], corner_radius=8,
                 command=lambda a=action: self.process_action(a)
             )
             btn.grid(row=idx, column=0, padx=5, pady=5, sticky="ew")
@@ -268,29 +244,19 @@ class App(ctk.CTk):
             btn.bind("<Leave>", lambda e, b=btn: self.hide_tooltip(b))
             self.buttons.append(btn)
 
-        # Log area с кастомным скроллбаром
+        # Log area
         self.log_frame = ctk.CTkScrollableFrame(
-            self,
-            fg_color="#2e2e2e",
-            scrollbar_button_color="#252525",
-            scrollbar_button_hover_color="#555555",
-            corner_radius=10
+            self, fg_color="#2e2e2e", scrollbar_button_color="#252525",
+            scrollbar_button_hover_color="#555555", corner_radius=10
         )
         self.log_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
         self.log_area = Text(
-            self.log_frame,
-            wrap="word",
-            font=("Courier", 10),
-            bg="#2e2e2e",
-            fg="#FFFFFF",
-            insertbackground="#FFFFFF",
-            borderwidth=0,
-            highlightthickness=0
+            self.log_frame, wrap="word", font=("Courier", 10), bg="#2e2e2e", fg="#FFFFFF",
+            insertbackground="#FFFFFF", borderwidth=0, highlightthickness=0
         )
         self.log_area.pack(fill="both", expand=True)
 
-        # Добавляем контекстное меню для копирования
         self.log_menu = Menu(self.log_area, tearoff=0)
         self.log_menu.add_command(label="Copy", command=self.copy_log)
         self.log_area.bind("<Button-3>", self.show_log_menu)
@@ -309,24 +275,16 @@ class App(ctk.CTk):
 
             def emit(self, record):
                 msg = record.msg
-                # Фильтруем дебаг-логи
                 if any(debug_msg in msg for debug_msg in ["Starting action", "Received event", "Processing action"]):
                     return
-
                 self.text_widget.configure(state='normal')
                 level_tag = record.levelname
-                action_tag = None
-                for action in self.action_colors.keys():
-                    if f"[{action}]" in msg:
-                        action_tag = action
-                        break
-
+                action_tag = next((action for action in self.action_colors.keys() if f"[{action}]" in msg), None)
                 if action_tag:
                     msg_cleaned = msg.replace(f"[{action_tag}] ", "")
                     self.text_widget.insert("end", msg_cleaned + '\n', (level_tag, action_tag))
                 else:
                     self.text_widget.insert("end", msg + '\n', level_tag)
-
                 self.text_widget.see("end")
                 self.text_widget.configure(state='normal')
 
@@ -335,18 +293,13 @@ class App(ctk.CTk):
         logger.addHandler(log_handler)
 
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.bind("<Configure>", self.debounce_update_layout)
         logger.info("Starting queue check")
-        self.after(100, self.check_queue)
+        self.check_queue()
         logger.info("Interface initialized")
-
-        # Убедимся, что окно видимо и на переднем плане
         self.deiconify()
         self.lift()
         self.focus_force()
-
-        # Обновляем расположение кнопок при изменении размера окна с оптимизацией
-        self._last_update = 0
-        self.bind("<Configure>", self.debounce_update_layout)
 
     def start_drag(self, event):
         self.x = event.x
@@ -358,29 +311,36 @@ class App(ctk.CTk):
         x = self.winfo_x() + deltax
         y = self.winfo_y() + deltay
         self.geometry(f"+{x}+{y}")
+        self.update_idletasks()
 
     def debounce_update_layout(self, event):
         current_time = time.time()
-        if current_time - self._last_update > 0.1:  # Обновляем не чаще 1 раза в 100 мс
+        if current_time - self._last_update > 0.2:
             self._last_update = current_time
             self.update_button_layout()
+        else:
+            if not hasattr(self, '_scheduled_update'):
+                self._scheduled_update = self.after(200, self._update_layout_once)
+
+    def _update_layout_once(self):
+        self.update_button_layout()
+        if hasattr(self, '_scheduled_update'):
+            del self._scheduled_update
 
     def update_button_layout(self):
-        # Обновляем расположение кнопок в зависимости от ширины окна
         width = self.button_inner_frame.winfo_width()
-        # Минимальная ширина кнопки определяется шириной текста
-        columns = 1
+        if width <= 0:
+            return
 
-        # Сбрасываем старые настройки
         for widget in self.button_inner_frame.winfo_children():
             widget.grid_forget()
 
-        # Распределяем кнопки
         buttons_per_row = []
         current_row = []
         for btn in self.buttons:
-            btn_width = btn.winfo_reqwidth()  # Ширина кнопки определяется текстом
-            if len(current_row) > 0 and sum(b.winfo_reqwidth() for b in current_row) + btn_width + (len(current_row) + 1) * 10 > width:
+            btn_width = btn.winfo_reqwidth()
+            if (len(current_row) > 0 and 
+                sum(b.winfo_reqwidth() for b in current_row) + btn_width + (len(current_row) + 1) * 10 > width):
                 buttons_per_row.append(current_row)
                 current_row = [btn]
             else:
@@ -388,31 +348,33 @@ class App(ctk.CTk):
         if current_row:
             buttons_per_row.append(current_row)
 
-        # Размещаем кнопки
         for row_idx, row in enumerate(buttons_per_row):
             for col_idx, btn in enumerate(row):
                 btn.grid(row=row_idx, column=col_idx, padx=5, pady=5, sticky="ew")
-            # Растягиваем кнопки по строке
             for col_idx in range(len(row)):
                 self.button_inner_frame.grid_columnconfigure(col_idx, weight=1)
-            if len(row) == 1:
-                btn.grid(columnspan=1, sticky="ew")
-            else:
-                for col_idx in range(len(row), columns):
-                    self.button_inner_frame.grid_columnconfigure(col_idx, weight=0)
 
     def show_tooltip(self, text, action, button):
+        if hasattr(self, '_tooltip_timer'):
+            self.after_cancel(self._tooltip_timer)
+        self._tooltip_timer = self.after(150, lambda: self._show_tooltip(text, action, button))
+
+    def _show_tooltip(self, text, action, button):
         if not hasattr(self, '_active_button') or self._active_button != button:
             if hasattr(self, '_active_button'):
-                self.hide_tooltip(self._active_button)
+                self._hide_tooltip(self._active_button)
             self.tooltip_label.configure(text=text)
             button._original_fg_color = button.cget("fg_color")
             button._original_text_color = button.cget("text_color")
             button.configure(fg_color=self.action_colors[action], text_color="#333333")
             self._active_button = button
-            self.after(100, lambda: self.tooltip_label.update())
 
     def hide_tooltip(self, button):
+        if hasattr(self, '_tooltip_timer'):
+            self.after_cancel(self._tooltip_timer)
+        self._tooltip_timer = self.after(150, lambda: self._hide_tooltip(button))
+
+    def _hide_tooltip(self, button):
         if hasattr(self, '_active_button') and self._active_button == button:
             self.tooltip_label.configure(text="")
             if hasattr(button, '_original_fg_color'):
@@ -428,52 +390,45 @@ class App(ctk.CTk):
         current_config = language_configs[lang.upper()]
         key_states = {key['combination'].lower(): False for key in current_config['hotkeys']}
         key_states['ctrl'] = False
-        # Обновляем цвета действий
         self.action_colors = {hotkey['description'][1]: hotkey['log_color'] for hotkey in current_config['hotkeys']}
         self.action_colors["restart"] = "#FFFFFF"
-        # Обновляем конфигурацию кнопок
-        self.button_configs = [(hotkey['description'][0], hotkey['description'][1], hotkey['description'][2]) for hotkey in current_config['hotkeys']]
-        # Проверяем наличие секции buttons, если её нет — используем значения по умолчанию
+        self.button_configs = [(hotkey['description'][0], hotkey['description'][1], hotkey['description'][2]) 
+                              for hotkey in current_config['hotkeys']]
         restart_text = current_config.get('buttons', {}).get('restart', "Restart")
         restart_tooltip = current_config.get('buttons', {}).get('restart_tooltip', "Restarts the application.")
         self.button_configs.append((restart_text, "restart", restart_tooltip))
-        # Обновляем текст, тултипы и цвета кнопок
         for idx, (text, action, tooltip) in enumerate(self.button_configs):
-            # Обновляем текст кнопки
             self.buttons[idx].configure(text=text)
-            # Очищаем старые привязки событий
             self.buttons[idx].unbind("<Enter>")
             self.buttons[idx].unbind("<Leave>")
-            # Привязываем новые события с обновлённым тултипом
             self.buttons[idx].bind("<Enter>", lambda e, t=tooltip, a=action, b=self.buttons[idx]: self.show_tooltip(t, a, b))
             self.buttons[idx].bind("<Leave>", lambda e, b=self.buttons[idx]: self.hide_tooltip(b))
-            # Обновляем цвета
-            self.buttons[idx].configure(text_color=self.action_colors[action])
-            if action == "restart":
-                self.buttons[idx].configure(hover_color="#FF9999")
-            else:
-                self.buttons[idx].configure(hover_color=self.action_colors[action])
+            self.buttons[idx].configure(text_color=self.action_colors[action], 
+                                       hover_color="#FF9999" if action == "restart" else self.action_colors[action])
         logger.info(f"Language changed to {lang}")
 
     def check_queue(self):
-        try:
-            event = self.queue.get_nowait()
-            logger.info(f"Received event from queue: {event}")
-            actions = {
-                hotkey['description'][1]: lambda act=hotkey['description'][1], pr=hotkey['prompt']: _handle_text_operation(process_text_with_gemini, act, pr)
-                for hotkey in current_config['hotkeys'] if hotkey['description'][1] != 'image'
-            }
-            actions['image'] = lambda act='image', pr=current_config['hotkeys'][-1]['prompt']: handle_image_analysis(act, pr)
-            actions['restart'] = lambda: os.execl(sys.executable, sys.executable, *sys.argv)
-            
-            if event in actions:
-                logger.info(f"Starting action: {event}")
-                threading.Thread(target=actions[event], args=(), daemon=True).start()
-        except Empty:
-            pass
-        except Exception as e:
-            logger.error(f"Error processing queue: {e}")
-        self.after(100, self.check_queue)
+        def queue_worker():
+            while not self.stop_event.is_set():
+                try:
+                    event = self.queue.get_nowait()
+                    logger.info(f"Received event from queue: {event}")
+                    actions = {
+                        hotkey['description'][1]: lambda act=hotkey['description'][1], pr=hotkey['prompt']: _handle_text_operation(process_text_with_gemini, act, pr)
+                        for hotkey in current_config['hotkeys'] if hotkey['description'][1] != 'image'
+                    }
+                    actions['image'] = lambda act='image', pr=current_config['hotkeys'][-1]['prompt']: handle_image_analysis(act, pr)
+                    actions['restart'] = lambda: os.execl(sys.executable, sys.executable, *sys.argv)
+                    
+                    if event in actions:
+                        logger.info(f"Starting action: {event}")
+                        threading.Thread(target=actions[event], args=(), daemon=True).start()
+                except Empty:
+                    time.sleep(0.1)
+                except Exception as e:
+                    logger.error(f"Error processing queue: {e}")
+        
+        threading.Thread(target=queue_worker, daemon=True).start()
 
     def show_log_menu(self, event):
         self.log_menu.post(event.x_root, event.y_root)
@@ -483,7 +438,7 @@ class App(ctk.CTk):
         if selected_text:
             self.clipboard_clear()
             self.clipboard_append(selected_text)
-        return "break"  # Предотвращаем дальнейшую обработку события
+        return "break"
 
     def on_closing(self):
         logger.info("Closing program...")
