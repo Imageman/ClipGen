@@ -1,0 +1,65 @@
+{
+    "api_key": "YOUR_API_KEY_HERE",
+    "hotkeys": [
+        {
+            "combination": "Ctrl+F1",
+            "name": "Correction",
+            "log_color": "#FFFFFF",
+            "description": ["Ctrl+F1: Correction", "normal", "Corrects grammar, punctuation, and spelling of text in the clipboard."],
+            "prompt": "Please correct the following text. Fix the grammar, punctuation, and spelling, without changing the meaning of the text I gave you. If you see ))) in the text and they are used as emojis/smileys, don't touch them. If the message consists of one or two sentences, do not put a period at the end. Replace hyphens with correct dashes, use «guillemets», add correct spaces, and fix other typographical inaccuracies. If there is a list in the text, format it nicely using • symbols for bullet points. If necessary, break the text into paragraphs to improve readability. Be sure to return ONLY the corrected text, do not add words that were not in the original text without unnecessary comments and explanations, this is very important! For non-compliance with this rule, a fine of $15:\n\n"
+        },
+        {
+            "combination": "Ctrl+F2",
+            "name": "Rewrite",
+            "log_color": "#A3BFFA",
+            "description": ["Ctrl+F2: Rewrite", "voice", "Rewrites the text from the clipboard, correcting errors and improving readability."],
+            "prompt": "Please correct the following text, rephrase it if necessary to ensure it is well-structured and highly readable. Tidy it up by correcting grammatical, syntactic, and punctuation errors. If you see English brands or terms written in Russian letters, write them correctly (e.g., фигма is Figma, адобе is Adobe, бевел is bevel, etc.). Consider the context and restore any missing words. If you see a sentence incorrectly split into two, combine them into one if necessary for understanding. Correct automatic voice input errors, correct incorrect word endings if they do not match the context, fix automatic punctuation if it disrupts the meaning of the text, correctly format proper nouns, names of cities, organizations, and other important words with capitalization. If there is a list, format it nicely using • symbols for bullet points. If necessary, break the text into paragraphs to improve readability. If there is profanity in the text, replace it with emotionally charged but censored expressions without losing the harshness of the statement. Be sure to return ONLY the corrected text without any extra comments or explanations, this is very important! Failure to comply with this rule will result in a $15 fine:\n\n"
+        },
+        {
+            "combination": "Ctrl+F3",
+            "name": "Translation",
+            "log_color": "#FBB6CE",
+            "description": ["Ctrl+F3: Translation", "translate", "Translates text from the clipboard to English."],
+            "prompt": "Please translate the following text into Russian. If the text is already in Russian, translate it into English. Return ONLY the translated text:\n\n"
+        },
+        {
+            "combination": "Ctrl+F6",
+            "name": "Explanation",
+            "log_color": "#FAF089",
+            "description": ["Ctrl+F6: Explanation", "explain", "Explains the text from the clipboard in simple terms with examples."],
+            "prompt": "Please explain the following text in simple terms. Provide examples of use or application if applicable. If it is a term, provide a definition and explain its origin if possible. Return ONLY the explanation:\n\n"
+        },
+        {
+            "combination": "Ctrl+F7",
+            "name": "Answer a Question",
+            "log_color": "#FBD38D",
+            "description": ["Ctrl+F7: Answer a Question", "question", "Answers a question from the clipboard using available information."],
+            "prompt": "Please answer the following question using your knowledge and all available information. If the question allows for different answers, indicate the most likely one and explain why. Return ONLY the answer:\n\n"
+        },
+        {
+            "combination": "Ctrl+F8",
+            "name": "Request",
+            "log_color": "#B5EAD7",
+            "description": ["Ctrl+F8: Request", "do_what_i_mean", "Executes the request or task specified in the clipboard."],
+            "prompt": "fulfill the user's request. Return ONLY the answer:\n\n"
+        },
+        {
+            "combination": "Ctrl+F9",
+            "name": "Comment",
+            "log_color": "#D6BCFA",
+            "description": ["Ctrl+F9: Comment", "sarcasm", "Generates sarcastic comments to the text in the clipboard."],
+            "prompt": "Your task is to generate witty, figurative, ambiguous, pun-filled, dark humor, subtle humor, and sarcastic comments in response to chat messages. You receive a chat message or news as input. The output should be 3 different comments in response. Do not add any explanations or introductions. Only the comment itself! Here is the chat message you need to generate a comment for:\n\n"
+        },
+        {
+            "combination": "Ctrl+F10",
+            "name": "Image Analysis",
+            "log_color": "#A1CFF9",
+            "description": ["Ctrl+F10: Image Analysis", "image", "Analyzes the image from the clipboard and extracts text with a description."],
+            "prompt": "You have an image analysis. If the image predominantly contains Russian text, return all the text from the image as text and explain what the image is about, what is depicted on it. If the image predominantly contains non-Russian text, then return all the text from the image as text and additionally translate this text into Russian, and also explain what is depicted in the image. Return ONLY the answer:\n\n"
+        }
+    ],
+    "buttons": {
+        "restart": "Restart",
+        "restart_tooltip": "Restarts the application."
+    }
+}
