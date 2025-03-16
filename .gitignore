@@ -1,2 +1,8 @@
 config_EN.json
 config_ru.json
+dist/
+build/
+*.spec
+__pycache__/
+*.pyc
+*.zip
