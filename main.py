@@ -4,8 +4,8 @@ import logging
 import json
 import time
 import winsound
-from multiprocessing import Queue
-from multiprocessing.queues import Empty
+from multiprocessing import Queue, queues
+# from multiprocessing.queues import Empty
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import threading
 from PIL import ImageGrab
@@ -452,7 +452,7 @@ class App(ctk.CTk):
                     if event in actions:
                         logger.info(f"Starting action: {event}")
                         threading.Thread(target=actions[event], args=(), daemon=True).start()
-                except Empty:
+                except queues.Empty:
                     time.sleep(0.1)
                 except Exception as e:
                     logger.error(f"Error processing queue: {e}")
