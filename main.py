@@ -3,6 +3,7 @@ import os
 import logging
 import json
 import time
+import winsound
 from multiprocessing import Queue
 from multiprocessing.queues import Empty
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
@@ -10,6 +11,7 @@ import threading
 from PIL import ImageGrab
 import pyperclip
 import google.generativeai as genai
+from dotenv import load_dotenv
 from google.generativeai import GenerationConfig
 import win32api
 import win32con
@@ -48,7 +50,9 @@ if "RU" in languages:
 else:
     current_config = list(language_configs.values())[0]
 
-API_KEY = current_config['api_key']
+load_dotenv('.env')
+# API_KEY = current_config['api_key']
+API_KEY = os.getenv('gemini_api_key')
 if not API_KEY:
     logger.error("Error: API key not found in configuration")
     sys.exit(1)
@@ -72,7 +76,7 @@ def process_text_with_gemini(original_text: str, action: str, prompt: str) -> st
     try:
         full_prompt = prompt + original_text
         def generate():
-            return model.generate_content(full_prompt, generation_config=GenerationConfig(temperature=0.7, max_output_tokens=2048))
+            return model.generate_content(full_prompt, generation_config=GenerationConfig(temperature=0.1, max_output_tokens=2048))
 
         start_time = time.time()
         response = call_with_timeout(generate, 45)
@@ -96,7 +100,7 @@ def handle_image_analysis(action: str, prompt: str):
             return
         
         def generate():
-            return model.generate_content(contents=[prompt, image], generation_config=GenerationConfig(temperature=0.7, max_output_tokens=2048))
+            return model.generate_content(contents=[prompt, image], generation_config=GenerationConfig(temperature=0.1, max_output_tokens=2048))
 
         start_time = time.time()
         response = call_with_timeout(generate, 45)
@@ -116,6 +120,12 @@ def handle_image_analysis(action: str, prompt: str):
 
 def _handle_text_operation(operation_func, action, prompt):
     try:
+        # Отжимаем Alt, если он нажат
+        if win32api.GetKeyState(win32con.VK_MENU) < 0:  # VK_MENU - это Alt
+            win32api.keybd_event(win32con.VK_MENU, 0, win32con.KEYEVENTF_KEYUP, 0)
+            time.sleep(0.05)  # Короткая пауза для корректного отжатия
+        winsound.PlaySound("rsc\in.wav ", winsound.SND_FILENAME)
+            
         win32api.keybd_event(win32con.VK_CONTROL, 0, 0, 0)
         win32api.keybd_event(ord('C'), 0, 0, 0)
         time.sleep(0.1)
@@ -137,6 +147,7 @@ def _handle_text_operation(operation_func, action, prompt):
         time.sleep(0.1)
         win32api.keybd_event(ord('V'), 0, win32con.KEYEVENTF_KEYUP, 0)
         win32api.keybd_event(win32con.VK_CONTROL, 0, win32con.KEYEVENTF_KEYUP, 0)
+        winsound.PlaySound("rsc\out.wav", winsound.SND_FILENAME)
     except Exception as ex:
         logger.error(f"[{action}] Error: {ex}")
 
@@ -144,17 +155,32 @@ def on_press(key, queue):
     global key_states
     try:
         key_str = str(key).lower().replace("key.", "")
-        if key_str == "ctrl_l" or key_str == "ctrl_r":
+        # print(key_str)
+        
+        # Обрабатываем нажатие Ctrl и Alt
+        if key_str in ["ctrl_l", "ctrl_r"]:
             key_states['ctrl'] = True
             return
+        elif key_str in ["alt_l", "alt_r", "alt_gr"]:
+            key_states['alt'] = True
+            return
 
+        # Проверяем, какие горячие клавиши настроены
         for hotkey in current_config['hotkeys']:
             combo = hotkey['combination'].lower()
             action = hotkey['description'][1]
-            if key_str in combo.lower() and key_states['ctrl']:
+            
+            # Проверяем, содержится ли key_str в комбинации
+            if key_str in combo and (
+                ("ctrl" in combo and key_states.get('ctrl')) or
+                ("alt" in combo and key_states.get('alt'))
+            ):
                 logger.info(f"[{action}] {hotkey['description'][0]} - {time.strftime('%H:%M:%S')}")
                 queue.put(action)
+                
+                # Сбрасываем состояние клавиш после выполнения действия
                 key_states['ctrl'] = False
+                key_states['alt'] = False
                 key_states[combo] = False
                 break
     except Exception as e:
@@ -164,13 +190,16 @@ def on_release(key, queue):
     global key_states
     try:
         key_str = str(key).lower().replace("key.", "")
-        if key_str == "ctrl_l" or key_str == "ctrl_r":
+
+        # Сбрасываем состояние клавиши при отпускании
+        if key_str in ["ctrl_l", "ctrl_r"]:
             key_states['ctrl'] = False
-        for hotkey in current_config['hotkeys']:
-            if key_str in hotkey['combination'].lower():
-                key_states[hotkey['combination'].lower()] = False
+        elif key_str in ["alt_l", "alt_r", "alt_gr"]:
+            key_states['alt'] = False
+
     except Exception as e:
         logger.error(f"Error in on_release: {e}")
+
 
 def hotkey_listener(queue: Queue, stop_event: threading.Event):
     try:
@@ -252,7 +281,7 @@ class App(ctk.CTk):
         self.log_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
         self.log_area = Text(
-            self.log_frame, wrap="word", font=("Courier", 10), bg="#2e2e2e", fg="#FFFFFF",
+            self.log_frame, wrap="word", font=("Consolas", 14), bg="#2e2e2e", fg="#FFFFFF",
             insertbackground="#FFFFFF", borderwidth=0, highlightthickness=0
         )
         self.log_area.pack(fill="both", expand=True)
@@ -450,6 +479,7 @@ class App(ctk.CTk):
             time.sleep(0.5)
         self.quit()
         self.destroy()
+        sys.exit(0)  # этот вызов для немедленного завершения скрипта
 
 def main():
     logger.info("Main process started.")
