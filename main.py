@@ -1,6 +1,7 @@
+import logging
 import sys
 import os
-import logging
+from loguru import logger
 import json
 import time
 import winsound
@@ -20,12 +21,7 @@ from pynput import keyboard as pkb
 import customtkinter as ctk
 from tkinter import Text, Menu
 
-# Настройка логирования
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s', datefmt='%H:%M:%S'))
-logger.addHandler(console_handler)
+import clipboard_mon
 
 # Глобальная переменная для текущей конфигурации
 current_config = None
@@ -81,7 +77,7 @@ def process_text_with_gemini(original_text: str, action: str, prompt: str) -> st
         start_time = time.time()
         response = call_with_timeout(generate, 45)
         elapsed_time = time.time() - start_time
-        logger.info(f"[{action}] Completed - executed in {elapsed_time:.2f} seconds")
+        logger.debug(f"[{action}] Completed - executed in {elapsed_time:.2f} seconds")
         if response and response.text:
             logger.info(f"[{action}] {response.text.strip()}")
         return response.text.strip() if response and response.text else ""
@@ -107,7 +103,7 @@ def handle_image_analysis(action: str, prompt: str):
         elapsed_time = time.time() - start_time
         logger.info(f"[{action}] Image analysis completed - executed in {elapsed_time:.2f} seconds")
         if response and response.text:
-            logger.info(f"[{action}] {response.text.strip()}")
+            logger.info(f"[{action}] Paste clipboard {response.text.strip()}")
             pyperclip.copy(response.text.strip())
             time.sleep(0.3)
             win32api.keybd_event(win32con.VK_CONTROL, 0, 0, 0)
@@ -124,7 +120,7 @@ def _handle_text_operation(operation_func, action, prompt):
         if win32api.GetKeyState(win32con.VK_MENU) < 0:  # VK_MENU - это Alt
             win32api.keybd_event(win32con.VK_MENU, 0, win32con.KEYEVENTF_KEYUP, 0)
             time.sleep(0.05)  # Короткая пауза для корректного отжатия
-        winsound.PlaySound("rsc\in.wav ", winsound.SND_FILENAME)
+        winsound.PlaySound("rsc\in.wav", winsound.SND_FILENAME)
             
         win32api.keybd_event(win32con.VK_CONTROL, 0, 0, 0)
         win32api.keybd_event(ord('C'), 0, 0, 0)
@@ -139,6 +135,7 @@ def _handle_text_operation(operation_func, action, prompt):
             return
 
         processed_text = operation_func(original_text, action, prompt)
+        logger.debug(f'Paste clipboard {processed_text}')
         pyperclip.copy(processed_text)
 
         time.sleep(0.3)
@@ -291,44 +288,69 @@ class App(ctk.CTk):
         self.log_area.bind("<Button-3>", self.show_log_menu)
         self.log_area.bind("<Control-c>", self.copy_log)
 
-        class LogHandler(logging.Handler):
-            def __init__(self, text_widget, action_colors):
-                super().__init__()
-                self.text_widget = text_widget
-                self.action_colors = action_colors
-                self.text_widget.tag_configure("INFO", foreground="#FFFFFF")
-                self.text_widget.tag_configure("WARNING", foreground="#FFD700")
-                self.text_widget.tag_configure("ERROR", foreground="#FF4500")
-                for action, color in action_colors.items():
-                    self.text_widget.tag_configure(action, foreground=color)
-
-            def emit(self, record):
-                msg = record.msg
-                if any(debug_msg in msg for debug_msg in ["Starting action", "Received event", "Processing action"]):
-                    return
-                self.text_widget.configure(state='normal')
-                level_tag = record.levelname
-                action_tag = next((action for action in self.action_colors.keys() if f"[{action}]" in msg), None)
-                if action_tag:
-                    msg_cleaned = msg.replace(f"[{action_tag}] ", "")
-                    self.text_widget.insert("end", msg_cleaned + '\n', (level_tag, action_tag))
-                else:
-                    self.text_widget.insert("end", msg + '\n', level_tag)
-                self.text_widget.see("end")
-                self.text_widget.configure(state='normal')
-
-        log_handler = LogHandler(self.log_area, self.action_colors)
-        log_handler.setFormatter(logging.Formatter('%(message)s'))
-        logger.addHandler(log_handler)
-
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.bind("<Configure>", self.debounce_update_layout)
+
+        # Настраиваем теги текстового виджета
+        self._configure_log_tags()
+
+        # Добавляем sink для loguru
+        self._setup_loguru_sink()
+
+
+        # Создаем экземпляр ClipboardMonitor с пользовательской функцией обратного вызова
+        self.monitor_clipboard = clipboard_mon.GlobalClipboardMonitor(command_callback=self.default_command)
+        self.monitor_clipboard.start()
+        logger.info(f"Double Ctrl-C Ctrl-C for translate clipboard ({current_config['hotkeys'][2]['name']}).")
+
+
+
         logger.info("Starting queue check")
         self.check_queue()
         logger.info("Interface initialized")
         self.deiconify()
         self.lift()
         self.focus_force()
+
+    def _configure_log_tags(self) -> None:
+        """Configure text widget tags for log levels and custom actions."""
+        self.log_area.tag_configure("INFO", foreground=self.action_colors.get("INFO", "#FFFFFF"))
+        self.log_area.tag_configure("WARNING", foreground=self.action_colors.get("WARNING", "#FFD700"))
+        self.log_area.tag_configure("ERROR", foreground=self.action_colors.get("ERROR", "#FF4500"))
+        # Добавляем теги для пользовательских действий
+        for action, color in self.action_colors.items():
+            if action not in ("INFO", "WARNING", "ERROR"):
+                self.log_area.tag_configure(action, foreground=color)
+
+    def _setup_loguru_sink(self) -> None:
+        """
+        Sets up a loguru sink that writes log messages to the Tkinter text widget.
+        The sink function has access to the instance attributes.
+        """
+
+        def log_sink(message):
+            record = message.record
+            msg = record["message"]
+            # Фильтруем отладочные сообщения, если необходимо
+            if any(debug_msg in msg for debug_msg in ["Starting action", "Received event", "Processing action"]):
+                return
+            if record['level'].no < 20:
+                return
+
+            self.log_area.configure(state="normal")
+            level_tag = record["level"].name
+            # Ищем пользовательский тег (если сообщение содержит, например, "[my_action]")
+            action_tag = next((action for action in self.action_colors.keys() if f"[{action}]" in msg), None)
+            if action_tag:
+                msg_cleaned = msg.replace(f"[{action_tag}] ", "")
+                self.log_area.insert("end", msg_cleaned + "\n", (level_tag, action_tag))
+            else:
+                self.log_area.insert("end", msg + "\n", level_tag)
+            self.log_area.see("end")
+            self.log_area.configure(state="disabled")
+
+        # Добавляем sink в loguru
+        logger.add(log_sink, format="{message}", level="DEBUG")
 
     def start_drag(self, event):
         self.x = event.x
@@ -471,6 +493,7 @@ class App(ctk.CTk):
 
     def on_closing(self):
         logger.info("Closing program...")
+        self.monitor_clipboard.stop()
         global executor
         executor.shutdown(wait=True, cancel_futures=True)
         if self.listener_thread.is_alive():
@@ -481,8 +504,42 @@ class App(ctk.CTk):
         self.destroy()
         sys.exit(0)  # этот вызов для немедленного завершения скрипта
 
+    @classmethod
+    def default_command(cls, text, image) -> None:
+        """
+        Custom command function to be called when a repeated copy event is detected.
+
+        Parameters:
+        -----------
+        text : Optional[str]
+            Clipboard text or None.
+        image : Optional[object]
+            Clipboard image or None.
+        """
+        winsound.PlaySound("rsc\in.wav", winsound.SND_FILENAME)
+
+        if text:
+            prompt = current_config['hotkeys'][2]['prompt']
+            action = current_config['hotkeys'][2]['name']
+            processed_text = process_text_with_gemini(text, action, prompt)
+            logger.debug(f'Paste clipboard {processed_text}')
+            pyperclip.copy(processed_text)
+
+            # time.sleep(0.1)
+            # win32api.keybd_event(win32con.VK_CONTROL, 0, 0, 0)
+            # win32api.keybd_event(ord('V'), 0, 0, 0)
+            # time.sleep(0.1)
+            # win32api.keybd_event(ord('V'), 0, win32con.KEYEVENTF_KEYUP, 0)
+            # win32api.keybd_event(win32con.VK_CONTROL, 0, win32con.KEYEVENTF_KEYUP, 0)
+
+            winsound.PlaySound("rsc\out.wav", winsound.SND_FILENAME)
+
+        logger.debug(f"Custom command triggered with text: {text} and image: {'present' if image else 'None'}")
+
+
 def main():
     logger.info("Main process started.")
+
     event_queue = Queue()
     stop_event = threading.Event()
     listener_thread = threading.Thread(target=hotkey_listener, args=(event_queue, stop_event), daemon=True)
@@ -500,4 +557,14 @@ def main():
     logger.info("Program completed after mainloop")
 
 if __name__ == "__main__":
+    logger.remove()
+    logger.add("clipgen.log", rotation="21 MB", retention=3, compression="zip", backtrace=True,
+               diagnose=True)  # Automatically rotate too big file
+    logger.add("clipgen_ERROR.log", rotation="20 MB", retention=3, compression="zip", backtrace=True, diagnose=True,
+               level='ERROR')
+    try:
+        logger.add(sys.stdout, colorize=True, format="<green>{time:HH:mm:ss}</green> <level>{message}</level>",
+                   level='INFO')
+    except  Exception as e:
+        logger.debug(f'logger.add(sys.stdout) Error: {str(e)}')
     main()
