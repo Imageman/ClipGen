@@ -133,7 +133,7 @@ class GlobalClipboardMonitor:
 
             if (self._last_clipboard_content is not None and
                     (current_time - self._last_copy_time < self.repeat_threshold) and
-                    (current_time - self._last_copy_time > 0.01) and
+                    (current_time - self._last_copy_time > 0.09) and # в некоторых программах двойное копирование
                     (clipboard_text == self._last_clipboard_content)):
                 logger.debug("Repeated copy detected. Triggering command callback.")
                 self.command_callback(text, image)

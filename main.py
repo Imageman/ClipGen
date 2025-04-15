@@ -198,6 +198,25 @@ def on_release(key, queue):
         logger.error(f"Error in on_release: {e}")
 
 
+def is_more_russian(text: str) -> bool:
+    # Определяем множества для русских и английских букв (в нижнем регистре)
+    russian_letters = set("абвгдеёжзийклмнопрстуфхцчшщъыьэюя")
+    english_letters = set("abcdefghijklmnopqrstuvwxyz")
+
+    count_russian = 0
+    count_english = 0
+
+    # Проходим по символам строки, переводя её в нижний регистр для корректного сравнения
+    for char in text.lower():
+        if char in russian_letters:
+            count_russian += 1
+        elif char in english_letters:
+            count_english += 1
+
+    # Если число русских букв больше, возвращаем True, иначе False
+    return count_russian > count_english
+
+
 def hotkey_listener(queue: Queue, stop_event: threading.Event):
     try:
         logger.info("Starting hotkey listener")
@@ -305,9 +324,9 @@ class App(ctk.CTk):
 
 
 
-        logger.info("Starting queue check")
+        logger.debug("Starting queue check")
         self.check_queue()
-        logger.info("Interface initialized")
+        logger.debug("Interface initialized")
         self.deiconify()
         self.lift()
         self.focus_force()
@@ -521,7 +540,16 @@ class App(ctk.CTk):
         if text:
             prompt = current_config['hotkeys'][2]['prompt']
             action = current_config['hotkeys'][2]['name']
-            processed_text = process_text_with_gemini(text, action, prompt)
+            if is_more_russian(text):
+                target="английский"
+            else:
+                target = "русский"
+
+            prompt = f'Переведи текст на {target} язык, используй вежливую форму.\n' \
+                     f'Верни ТОЛЬКО переведенный текст (не пиши "перевод" или "translated", ' \
+                     f'мне нужен просто текст на {target}).\n' \
+                     f'Если не знаешь как перевести, то оставь без перевода:\n\n"{text}"'
+            processed_text = process_text_with_gemini('', action, prompt)
             logger.debug(f'Paste clipboard {processed_text}')
             pyperclip.copy(processed_text)
 
